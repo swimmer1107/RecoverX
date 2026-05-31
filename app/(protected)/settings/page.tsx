@@ -2,7 +2,7 @@
 
 import { useMemo, useState, useEffect } from "react";
 import { Download, ShieldAlert, Trash2 } from "lucide-react";
-import { getUser } from "../lib/auth";
+import { getUser } from "../../lib/auth";
 
 type Tab = "Account" | "Notifications" | "Privacy & Data";
 

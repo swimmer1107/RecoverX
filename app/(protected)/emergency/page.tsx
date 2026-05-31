@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { Phone, MapPin, Edit2, Check } from "lucide-react";
-import { getSupabase, DEMO_USER } from "../lib/supabase";
+import { getSupabase, DEMO_USER } from "../../lib/supabase";
 
 // ── City lookup table ──────────────────────────────────────────────────────
 const CITY_AMBULANCES: Record<string, { name: string; phone: string }[]> = {

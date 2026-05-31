@@ -3,7 +3,7 @@
 import { useMemo, useState } from "react";
 import { GoogleGenerativeAI } from "@google/generative-ai";
 import { Check, Moon, Sparkles } from "lucide-react";
-import { createNotification } from "../components/NotificationBell";
+import { createNotification } from "../../components/NotificationBell";
 
 type Swelling = "None" | "Mild" | "Moderate" | "Severe";
 type Mood = "Great" | "Good" | "Okay" | "Low";

@@ -9,6 +9,7 @@ import { useEffect, useState } from "react";
 const appRoutes = [
   "/dashboard", "/session", "/activity", "/reports",
   "/checkin", "/faq", "/profile", "/settings", "/clinical-trust",
+  "/find-doctors", "/emergency", "/subscription",
 ];
 
 const mobileTabs = [

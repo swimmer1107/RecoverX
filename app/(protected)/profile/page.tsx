@@ -3,7 +3,7 @@
 import { ChangeEvent, useMemo, useRef, useState, useEffect } from "react";
 import { Camera, Check, Copy, KeyRound, Pencil, RefreshCw } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { getUser, updateUser } from "../lib/auth";
+import { getUser, updateUser } from "../../lib/auth";
 
 type FormTab = "Personal" | "Surgery" | "Emergency";
 type Tab = FormTab | "Doctor Access";

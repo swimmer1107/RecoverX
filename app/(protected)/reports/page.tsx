@@ -4,7 +4,7 @@ import { ChangeEvent, DragEvent, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { GoogleGenerativeAI } from "@google/generative-ai";
 import { CalendarDays, CheckCircle2, FileText, PlayCircle, RotateCcw, UploadCloud } from "lucide-react";
-import { createNotification } from "../components/NotificationBell";
+import { createNotification } from "../../components/NotificationBell";
 
 type UploadStatus = "idle" | "reading" | "done" | "error";
 

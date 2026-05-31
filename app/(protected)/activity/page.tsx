@@ -6,8 +6,8 @@ import {
   ReferenceArea, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis, CartesianGrid,
 } from "recharts";
 import { ChevronDown, ChevronRight, Download } from "lucide-react";
-import { getBrowserSupabase, DEMO_USER } from "../lib/supabase";
-import { getUser } from "../lib/auth";
+import { getBrowserSupabase, DEMO_USER } from "../../lib/supabase";
+import { getUser } from "../../lib/auth";
 
 // ── Types ──────────────────────────────────────────────────────────────────
 type Session = {

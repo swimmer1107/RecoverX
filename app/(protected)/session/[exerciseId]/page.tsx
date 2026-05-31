@@ -6,7 +6,7 @@ import { useParams, useRouter } from "next/navigation";
 import { GoogleGenerativeAI } from "@google/generative-ai";
 import type { PoseLandmarker } from "@mediapipe/tasks-vision";
 import { ArrowLeft, CameraOff, ShieldAlert, Volume2, X } from "lucide-react";
-import { createNotification } from "../../components/NotificationBell";
+import { createNotification } from "../../../components/NotificationBell";
 import {
   EmaSmoother,
   RepCounter,
@@ -15,7 +15,7 @@ import {
   redZoneState,
   roundAngle,
   shouldEmitDisplayAngle,
-} from "../../lib/poseSmoothing";
+} from "../../../lib/poseSmoothing";
 
 type CameraState = "starting" | "ready" | "denied" | "error";
 type PoseState = "loading" | "ready" | "error";
