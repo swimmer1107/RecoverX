@@ -2,11 +2,20 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import { GoogleGenerativeAI } from "@google/generative-ai";
-import { FilesetResolver, PoseLandmarker } from "@mediapipe/tasks-vision";
+import type { PoseLandmarker } from "@mediapipe/tasks-vision";
 import { ArrowLeft, CameraOff, ShieldAlert, Volume2, X } from "lucide-react";
 import { createNotification } from "../../components/NotificationBell";
+import {
+  EmaSmoother,
+  RepCounter,
+  SideTracker,
+  kneeAngleForSide,
+  redZoneState,
+  roundAngle,
+  shouldEmitDisplayAngle,
+} from "../../lib/poseSmoothing";
 
 type CameraState = "starting" | "ready" | "denied" | "error";
 type PoseState = "loading" | "ready" | "error";
@@ -66,12 +75,10 @@ function formatTimecode(ms: number) {
   return `+${formatTime(ms)}`;
 }
 
-function calculateAngle(a: PoseLandmark, b: PoseLandmark, c: PoseLandmark) {
-  const rad = Math.atan2(c.y - b.y, c.x - b.x) - Math.atan2(a.y - b.y, a.x - b.x);
-  let angle = Math.abs((rad * 180) / Math.PI);
-  if (angle > 180) angle = 360 - angle;
-  return Math.round(angle);
-}
+const POSE_MODEL_URLS = [
+  "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_full/float16/1/pose_landmarker_full.task",
+  "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task",
+];
 
 function getAngleTone(deviation: number) {
   if (deviation < 10) return { color: "#10B981", glow: "rgba(16,185,129,0.35)", label: "✓ In range" };
@@ -105,10 +112,17 @@ function StatMini({ label, value }: { label: string; value: string | number }) {
   );
 }
 
-export default function LiveSessionPage({ params }: { params: { exerciseId: string } }) {
+export default function LiveSessionPage() {
   const router = useRouter();
-  const config = exerciseConfig[params.exerciseId] ?? {
-    name: params.exerciseId.replace(/-/g, " ").replace(/\b\w/g, (char) => char.toUpperCase()),
+  const routeParams = useParams();
+  const exerciseId = typeof routeParams.exerciseId === "string"
+    ? routeParams.exerciseId
+    : Array.isArray(routeParams.exerciseId)
+      ? routeParams.exerciseId[0] ?? "knee-flexion"
+      : "knee-flexion";
+
+  const config = exerciseConfig[exerciseId] ?? {
+    name: exerciseId.replace(/-/g, " ").replace(/\b\w/g, (char) => char.toUpperCase()),
     targetAngle: 90,
     targetReps: 10,
     recoveryWeek: 3,
@@ -128,7 +142,10 @@ export default function LiveSessionPage({ params }: { params: { exerciseId: stri
   const lastAngleLogTime = useRef(0);
   const lastFeedbackTime = useRef(0);
   const isSpeakingRef = useRef(false);
-  const repStateRef = useRef<"extended" | "bent">("extended");
+  const angleSmootherRef = useRef(new EmaSmoother(0.2));
+  const sideTrackerRef = useRef(new SideTracker());
+  const repCounterRef = useRef(new RepCounter());
+  const lastDisplayEmitRef = useRef({ time: 0, value: 0 });
   const sessionStartRef = useRef(Date.now());
   const poseDetectedRef = useRef(true);
   const currentSideRef = useRef<"RIGHT" | "LEFT">("RIGHT");
@@ -352,13 +369,21 @@ export default function LiveSessionPage({ params }: { params: { exerciseId: stri
     const lm = results.landmarks[0];
     if (!lm[23] || !lm[24] || !lm[25] || !lm[26] || !lm[27] || !lm[28]) return;
 
-    const rightAngle = calculateAngle(lm[24], lm[26], lm[28]);
-    const leftAngle = calculateAngle(lm[23], lm[25], lm[27]);
-    const angle = Math.min(rightAngle, leftAngle);
-    currentSideRef.current = rightAngle <= leftAngle ? "RIGHT" : "LEFT";
+    const side = sideTrackerRef.current.update(lm);
+    if (!side) return;
+
+    const rawAngle = kneeAngleForSide(lm, side);
+    if (rawAngle === null) return;
+
+    currentSideRef.current = side;
+    const smoothed = angleSmootherRef.current.update(rawAngle);
+    const angle = roundAngle(smoothed);
 
     currentAngleRef.current = angle;
-    setCurrentAngle(angle);
+    if (shouldEmitDisplayAngle(lastDisplayEmitRef.current, angle)) {
+      lastDisplayEmitRef.current = { time: Date.now(), value: angle };
+      setCurrentAngle(angle);
+    }
 
     if (angle > bestAngleRef.current) {
       bestAngleRef.current = angle;
@@ -371,12 +396,7 @@ export default function LiveSessionPage({ params }: { params: { exerciseId: stri
       angleLogRef.current.push({ t: now - sessionStartRef.current, a: angle });
     }
 
-    if (angle < 60 && repStateRef.current === "extended") {
-      repStateRef.current = "bent";
-    }
-
-    if (angle > 140 && repStateRef.current === "bent") {
-      repStateRef.current = "extended";
+    if (repCounterRef.current.update(smoothed) === "rep_completed") {
       setRepCount((value) => value + 1);
       const deviation = Math.abs(config.targetAngle - bestAngleRef.current);
       if (deviation < 15) setCorrectReps((value) => value + 1);
@@ -385,15 +405,15 @@ export default function LiveSessionPage({ params }: { params: { exerciseId: stri
 
     triggerFeedback(angle);
 
-    // Feature 5: Red Zone Alert
+    // Feature 5: Red Zone Alert (hysteresis on smoothed angle)
     const dev = Math.abs(config.targetAngle - angle);
-    if (dev > 30 && !redZoneRef.current) {
-      redZoneRef.current = true;
-      setRedZoneActive(true);
-      addFeedbackMessage("⚠️ You're far outside the target range — ease back slowly.", "danger");
-    } else if (dev <= 30 && redZoneRef.current) {
-      redZoneRef.current = false;
-      setRedZoneActive(false);
+    const nextRedZone = redZoneState(redZoneRef.current, dev);
+    if (nextRedZone !== redZoneRef.current) {
+      redZoneRef.current = nextRedZone;
+      setRedZoneActive(nextRedZone);
+      if (nextRedZone) {
+        addFeedbackMessage("⚠️ You're far outside the target range — ease back slowly.", "danger");
+      }
     }
 
     // Feature 3: Compensation Detector (check every 4s)
@@ -423,26 +443,39 @@ export default function LiveSessionPage({ params }: { params: { exerciseId: stri
   const initMediaPipe = useCallback(async () => {
     setPoseState("loading");
     try {
-      const vision = await FilesetResolver.forVisionTasks("https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.0/wasm");
-      let landmarker: PoseLandmarker;
-      try {
-        landmarker = await PoseLandmarker.createFromOptions(vision, {
-          baseOptions: {
-            modelAssetPath: "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task",
-            delegate: "GPU",
-          },
-          runningMode: "VIDEO",
-          numPoses: 1,
-        });
-      } catch {
-        landmarker = await PoseLandmarker.createFromOptions(vision, {
-          baseOptions: {
-            modelAssetPath: "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task",
-            delegate: "CPU",
-          },
-          runningMode: "VIDEO",
-          numPoses: 1,
-        });
+      const { FilesetResolver, PoseLandmarker } = await import("@mediapipe/tasks-vision");
+      const vision = await FilesetResolver.forVisionTasks(
+        "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.35/wasm",
+      );
+
+      const poseOptions = {
+        runningMode: "VIDEO" as const,
+        numPoses: 1,
+        minPoseDetectionConfidence: 0.65,
+        minPosePresenceConfidence: 0.65,
+        minTrackingConfidence: 0.65,
+      };
+
+      let landmarker: PoseLandmarker | null = null;
+      const delegates: ("GPU" | "CPU")[] = ["GPU", "CPU"];
+
+      for (const modelAssetPath of POSE_MODEL_URLS) {
+        for (const delegate of delegates) {
+          try {
+            landmarker = await PoseLandmarker.createFromOptions(vision, {
+              baseOptions: { modelAssetPath, delegate },
+              ...poseOptions,
+            });
+            break;
+          } catch {
+            /* try next delegate / model */
+          }
+        }
+        if (landmarker) break;
+      }
+
+      if (!landmarker) {
+        throw new Error("Could not load any pose model");
       }
 
       landmarkerRef.current = landmarker;
@@ -462,7 +495,12 @@ export default function LiveSessionPage({ params }: { params: { exerciseId: stri
         return;
       }
       const stream = await navigator.mediaDevices.getUserMedia({
-        video: { width: 1280, height: 720, facingMode: "user" },
+        video: {
+          width: { ideal: 1280 },
+          height: { ideal: 720 },
+          facingMode: "user",
+          frameRate: { ideal: 30, max: 30 },
+        },
       });
       streamRef.current = stream;
       if (videoRef.current) {
@@ -507,7 +545,7 @@ export default function LiveSessionPage({ params }: { params: { exerciseId: stri
     const payload = {
       user_id: "demo-user",
       exercise_name: config.name,
-      exercise_key: params.exerciseId,
+      exercise_key: exerciseId,
       target_angle: config.targetAngle,
       achieved_angle: bestAngle,
       avg_angle: avgAngle,
@@ -606,10 +644,10 @@ export default function LiveSessionPage({ params }: { params: { exerciseId: stri
                 <canvas ref={canvasRef} className="h-full w-full object-cover" />
 
                 {(cameraState === "starting" || poseState === "loading") && (
-                  <div className="absolute inset-0 flex flex-col items-center justify-center bg-[rgba(255,255,255,0.92)] text-center">
-                    <div className="mb-4 h-14 w-14 animate-spin rounded-full border-4 border-[var(--border)] border-t-[var(--primary)]" />
-                    <h3 className="font-display text-xl text-[var(--text-1)]">Preparing camera and pose model</h3>
-                    <p className="mt-2 text-sm text-[var(--text-3)]">Keep your full body visible once the feed starts.</p>
+                  <div className="absolute inset-0 flex flex-col items-center justify-center bg-[rgba(13,27,42,0.82)] text-center">
+                    <div className="mb-4 h-14 w-14 animate-spin rounded-full border-4 border-white/20 border-t-[var(--primary)]" />
+                    <h3 className="font-display text-xl text-white">Preparing camera and pose model</h3>
+                    <p className="mt-2 text-sm text-white/70">First load can take 10–20 seconds. Keep your full body visible once the feed starts.</p>
                   </div>
                 )}
 
