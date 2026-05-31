@@ -93,21 +93,16 @@ Open https://recover-x-ten.vercel.app/ in your browser.
 ---
 
 ## 👥 Team
-
-Built with ❤️ at HackDay Agra 2026
-
-
-|---|
-| **Pulkit Kulshreshtha** |
-| **Gauri Singh** |
-| **Varun Khandelwal** |
-
-|---|
-
+```
+ Pulkit Kulshreshtha
+ Gauri Singh
+ Varun Khandelwal 
+```
+---
+ 
 <div align="center">
-
-🔗 **[recover-x-ten.vercel.app](https://recover-x-ten.vercel.app/)**
-
+🔗 https://recover-x-ten.vercel.app/
+ 
 *RecoverX — Because recovery shouldn't stop at the hospital door.*
-
+ 
 </div>
