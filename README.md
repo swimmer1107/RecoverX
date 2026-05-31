@@ -102,7 +102,7 @@ Built with ❤️ at HackDay Agra 2026
 | **Gauri Singh** |
 | **Varun Khandelwal** |
 
----
+|---|
 
 <div align="center">
 
