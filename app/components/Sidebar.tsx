@@ -6,7 +6,7 @@ import { useState, useEffect } from "react";
 import {
   LayoutGrid, PlayCircle, BarChart2, FileText,
   CalendarHeart, MessageCircle, User, Settings, LogOut,
-  MapPin, AlertTriangle,
+  MapPin, AlertTriangle, CreditCard,
 } from "lucide-react";
 import { getUser, clearUser, getInitials } from "../lib/auth";
 
@@ -18,6 +18,7 @@ const mainLinks = [
   { href: "/checkin", label: "Daily Check-in", icon: CalendarHeart },
   { href: "/faq", label: "AI Coach FAQ", icon: MessageCircle },
   { href: "/find-doctors", label: "Find Doctors", icon: MapPin },
+  { href: "/subscription", label: "Subscription", icon: CreditCard },
 ];
 
 const bottomLinks = [
