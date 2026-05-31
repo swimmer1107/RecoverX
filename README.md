@@ -76,21 +76,6 @@ npm run dev
 
 Open https://recover-x-ten.vercel.app/ in your browser.
 
----
-
-## 🔑 Environment Variables
-
-Create a `.env.local` file with the following:
-
-```env
-NEXT_PUBLIC_SUPABASE_URL=        # Your Supabase project URL
-NEXT_PUBLIC_SUPABASE_ANON_KEY=   # Your Supabase anon/public key
-NEXT_PUBLIC_GEMINI_API_KEY=      # Your Google Gemini API key
-```
-
-> See `.env.example` for the full template.
-
----
 
 ## ☁️ Deploying to Vercel
 
