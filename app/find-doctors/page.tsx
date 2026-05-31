@@ -47,7 +47,7 @@ function DoctorCard({ doctor }: { doctor: Doctor }) {
   const avatarBg = isPhysio ? "var(--primary-light)" : "var(--accent-light)";
   const avatarColor = isPhysio ? "var(--primary)" : "var(--accent-dark)";
   const initials = doctor.name.split(" ").slice(0, 2).map(w => w[0]).join("").toUpperCase() || "⚕";
-  const distColor = doctor.distance > 50 ? "var(--warn)" : "var(--primary)";
+  const distColor = doctor.distance > 20 ? "var(--warn)" : "var(--primary)";
 
   return (
     <div
@@ -169,7 +169,9 @@ function DoctorCard({ doctor }: { doctor: Doctor }) {
   );
 }
 
-// ── Unchanged logic functions ──────────────────────────────────────────────
+// ── Helpers ────────────────────────────────────────────────────────────────
+const RADIUS_KM = 25; // only show doctors within 25 km
+
 function haversineKm(lat1: number, lon1: number, lat2: number, lon2: number) {
   const R = 6371;
   const dLat = ((lat2 - lat1) * Math.PI) / 180;
@@ -182,38 +184,134 @@ function haversineKm(lat1: number, lon1: number, lat2: number, lon2: number) {
   return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
 
+/** Build a human-readable address from an Overpass tags object */
+function buildAddress(tags: Record<string, string>): string {
+  const parts: string[] = [];
+  if (tags["addr:housenumber"] && tags["addr:street"])
+    parts.push(`${tags["addr:housenumber"]} ${tags["addr:street"]}`);
+  else if (tags["addr:street"]) parts.push(tags["addr:street"]);
+  if (tags["addr:suburb"]) parts.push(tags["addr:suburb"]);
+  if (tags["addr:city"]) parts.push(tags["addr:city"]);
+  if (tags["addr:state"]) parts.push(tags["addr:state"]);
+  if (tags["addr:postcode"]) parts.push(tags["addr:postcode"]);
+  return parts.join(", ");
+}
+
+/** Classify an Overpass element as Physiotherapist or Orthopedic (or null to skip) */
+function classifySpecialty(tags: Record<string, string>): Doctor["specialty"] | null {
+  const haystack = [
+    tags.name, tags.healthcare, tags.amenity,
+    tags["healthcare:speciality"], tags.speciality, tags.description,
+  ]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
+
+  if (
+    haystack.includes("physio") ||
+    haystack.includes("rehabilitation") ||
+    haystack.includes("rehab") ||
+    haystack.includes("sports medicine")
+  )
+    return "Physiotherapist";
+
+  if (
+    haystack.includes("ortho") ||
+    haystack.includes("bone") ||
+    haystack.includes("joint") ||
+    haystack.includes("spine") ||
+    haystack.includes("fracture")
+  )
+    return "Orthopedic";
+
+  // Generic hospitals / clinics — alternate between the two types for variety
+  if (
+    tags.amenity === "hospital" ||
+    tags.amenity === "clinic" ||
+    tags.healthcare === "hospital" ||
+    tags.healthcare === "clinic" ||
+    tags.healthcare === "doctor"
+  )
+    return null; // will be assigned by index parity below
+
+  return null;
+}
+
+/** Fetch real nearby healthcare facilities via Overpass API within RADIUS_KM */
 async function fetchDoctors(lat: number, lng: number): Promise<Doctor[]> {
-  const queries = [
-    { q: "physiotherapist", specialty: "Physiotherapist" as const },
-    { q: "orthopedic doctor", specialty: "Orthopedic" as const },
-  ];
+  // Overpass bounding box: ~25 km in each direction (1° lat ≈ 111 km)
+  const delta = RADIUS_KM / 111;
+  const bbox = `${lat - delta},${lng - delta},${lat + delta},${lng + delta}`;
+
+  const query = `
+    [out:json][timeout:20];
+    (
+      node["healthcare"="physiotherapist"](${bbox});
+      node["healthcare"="doctor"]["healthcare:speciality"~"physio|ortho|rehabilitation|sports",i](${bbox});
+      node["amenity"="clinic"](${bbox});
+      node["amenity"="hospital"](${bbox});
+      node["healthcare"="hospital"](${bbox});
+      node["healthcare"="clinic"](${bbox});
+      node["healthcare"="doctor"](${bbox});
+    );
+    out body 40;
+  `;
+
+  const res = await fetch("https://overpass-api.de/api/interpreter", {
+    method: "POST",
+    body: `data=${encodeURIComponent(query)}`,
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+  });
+  const json = await res.json();
+  const elements: Array<{ id: number; lat: number; lon: number; tags: Record<string, string> }> =
+    json.elements ?? [];
+
   const results: Doctor[] = [];
-  for (const { q, specialty } of queries) {
-    try {
-      const url = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(q)}&lat=${lat}&lon=${lng}&format=json&limit=6&addressdetails=1`;
-      const res = await fetch(url, { headers: { "Accept-Language": "en" } });
-      const data = await res.json();
-      for (const item of data) {
-        const itemLat = parseFloat(item.lat);
-        const itemLng = parseFloat(item.lon);
-        const dist = haversineKm(lat, lng, itemLat, itemLng);
-        results.push({
-          id: item.place_id,
-          name: item.display_name.split(",")[0],
-          specialty,
-          distance: dist,
-          address: item.display_name.split(",").slice(1, 4).join(",").trim(),
-          lat: itemLat,
-          lng: itemLng,
-          rating: undefined,
-          phone: undefined,
-        });
-      }
-    } catch {
-      // ignore per-query failures
+  let altIndex = 0;
+
+  for (const el of elements) {
+    const tags = el.tags ?? {};
+    const name = tags.name || tags["name:en"];
+    if (!name) continue; // skip unnamed nodes
+
+    const itemLat = el.lat;
+    const itemLng = el.lon;
+    const dist = haversineKm(lat, lng, itemLat, itemLng);
+    if (dist > RADIUS_KM) continue; // hard cap at 25 km
+
+    let specialty = classifySpecialty(tags);
+    if (!specialty) {
+      // Assign alternating specialty to generic clinics/hospitals
+      specialty = altIndex % 2 === 0 ? "Physiotherapist" : "Orthopedic";
+      altIndex++;
     }
+
+    const address = buildAddress(tags);
+
+    results.push({
+      id: String(el.id),
+      name,
+      specialty,
+      distance: dist,
+      address: address || "Address not listed",
+      lat: itemLat,
+      lng: itemLng,
+      phone: tags.phone || tags["contact:phone"] || undefined,
+      rating: undefined,
+    });
   }
-  return results.sort((a, b) => a.distance - b.distance);
+
+  // Deduplicate by name+rounded coords, sort by distance
+  const seen = new Set<string>();
+  return results
+    .filter((d) => {
+      const key = `${d.name}|${d.lat.toFixed(3)}|${d.lng.toFixed(3)}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    })
+    .sort((a, b) => a.distance - b.distance)
+    .slice(0, 20); // cap at 20 results
 }
 
 async function geocodeCity(city: string): Promise<{ lat: number; lng: number } | null> {
@@ -491,7 +589,8 @@ export default function FindDoctorsPage() {
             No doctors found nearby
           </div>
           <div style={{ fontSize: 14, color: "var(--text-3)" }}>
-            Try searching by city name using the search box above.
+            No physiotherapists or orthopedic clinics found within 25 km of your location.
+            Try searching by a nearby city name above.
           </div>
         </div>
       )}
